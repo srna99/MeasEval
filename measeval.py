@@ -1,34 +1,40 @@
-from quantulum3 import parser   # must have installed numpy, scipy, and sklearn
-import spacy    # install en_core_web_sm
+import glob
+import re
+import pandas as pd
+import sklearn
+import sklearn_crfsuite
 
 
-nlp = spacy.load('en_core_web_sm')
+def get_text_data(text_files) -> pd.DataFrame:
+    docs = {'docId': [], 'text': []}
 
-with open('data/text/S0012821X12004384-952.txt', 'r') as file:
-    text = file.read()
+    for t_file in text_files:
+        with open(t_file, 'r') as f:
+            doc_id = re.findall(r'txt/(.*).txt', f.name)[0]
+            text = f.read()
 
-doc = nlp(text)
+            docs['docId'].append(doc_id)
+            docs['text'].append(text)
 
-target_sentences = []
+    doc_df = pd.DataFrame(docs, columns=['docId', 'text'])
 
-for sentence in doc.sents:
-    for token in sentence:
-        if 'NUM' in token.pos_:
-            target_sentences.append(sentence)
-            break
-
-print(target_sentences)
+    return doc_df
 
 
-# print(token.text)
-# print(token.text, token.idx, token.ent_type_, token.pos_, token.dep_)
+pd.set_option('display.max_columns', 10)
+pd.set_option('display.width', 500)
 
-# spacy.displacy.serve(list(doc.sents), style='ent')
+train_text_files = glob.glob('data/train/txt/*.txt')
+train_doc_df = get_text_data(train_text_files)
 
-# print(' '.join([t.text for t in token.subtree]))
+train_annot_files = glob.glob('data/train/tsv/*.tsv')
+train_annot_df = pd.concat([pd.read_csv(a_file, sep='\t', header=0) for a_file in train_annot_files])
+
+test_text_files = glob.glob('data/test/txt/*.txt')
+test_doc_df = get_text_data(test_text_files)
+
+test_annot_files = glob.glob('data/test/tsv/*.tsv')
+test_annot_df = pd.concat([pd.read_csv(a_file, sep='\t', header=0) for a_file in test_annot_files])
 
 
-# a = parser.parse('The ruler is 4 meters per hour long.')
-#
-# for x in range(len(a)):
-#     print(a[x].surface, a[x].span, a[x].unit)
+
