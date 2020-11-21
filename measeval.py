@@ -1,10 +1,14 @@
 import glob
 import re
 import pandas as pd
+import scipy.stats
 import spacy
 from quantities import units as u
 import sklearn
 import sklearn_crfsuite
+from sklearn.metrics import make_scorer
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn_crfsuite import metrics
 
 
 def get_text_data(text_files):
@@ -22,8 +26,6 @@ def get_text_data(text_files):
                     docs['docId'].append(doc_id)
                     docs['sent'].append(sent)
 
-        break
-
     doc_df = pd.DataFrame(docs, columns=['docId', 'sent'])
 
     return doc_df
@@ -33,13 +35,13 @@ def is_unit(token):
     """Check if token is in units list"""
 
     if 'μ' in token.text:
-        token.replace('μ', 'u')
+        token.text.replace('μ', 'u')
 
     return token.lower_ in units or token.lemma_ in units
 
 
 def get_labels(doc_df, annot_df):
-    """Match up labels from annot_df to text and add to doc_df"""
+    """Return matched up labels from annot_df to text"""
 
     labels = {'labels': []}
 
@@ -67,20 +69,12 @@ def get_labels(doc_df, annot_df):
 
                 span = (item[1][0], item[1][1])
 
-                if span[0] <= start < span[1] and span[0] < end <= span[1]:
-                    labeled_spans[i][0] = 'B-' + annot_type
-                    break
-                elif span[0] < end <= span[1]:
-                    labeled_spans[i][0] = 'I-' + annot_type
-                    break
-                elif span[0] <= start < span[1]:
-                    labeled_spans[i][0] = 'B-' + annot_type
-                elif start <= span[0] and end >= span[1]:
-                    labeled_spans[i][0] = 'I-' + annot_type
+                if (start <= span[0] < end) or (start < span[1] <= end):
+                    labeled_spans[i][0] = annot_type
 
-        labels['labels'].extend([label for label, span in labeled_spans])
+        labels['labels'].append([label for label, span in labeled_spans])
 
-    doc_df['labels'] = labels.values()
+    return labels['labels']
 
 
 def word2features(sent, i):
@@ -157,6 +151,7 @@ for key, val in u.__dict__.items():
 pd.set_option('display.max_columns', 10)
 pd.set_option('display.width', 500)
 
+
 # ------------ Getting data for train and test files ------------
 train_text_files = glob.glob('data/train/txt/*.txt')
 train_doc_df = get_text_data(train_text_files)
@@ -165,10 +160,81 @@ train_annot_files = glob.glob('data/train/tsv/*.tsv')
 train_annot_df = pd.concat([pd.read_csv(a_file, sep='\t', header=0) for a_file in train_annot_files])
 
 test_text_files = glob.glob('data/test/txt/*.txt')
-# test_doc_df = get_text_data(test_text_files)
+test_doc_df = get_text_data(test_text_files)
 
 test_annot_files = glob.glob('data/test/tsv/*.tsv')
 test_annot_df = pd.concat([pd.read_csv(a_file, sep='\t', header=0) for a_file in test_annot_files])
 
-get_labels(train_doc_df, train_annot_df)
+
+# ------------ Get features and labels ------------
+X_train = [sent2features(sent) for sent in train_doc_df['sent']]
+y_train = get_labels(train_doc_df, train_annot_df)
+
+X_test = [sent2features(sent) for sent in test_doc_df['sent']]
+y_test = get_labels(test_doc_df, test_annot_df)
+
+
+# ------------ Training ------------
+crf = sklearn_crfsuite.CRF(
+    algorithm='lbfgs',
+    c1=0.1,
+    c2=0.1,
+    max_iterations=100,
+    all_possible_transitions=True
+)
+
+crf.fit(X_train, y_train)
+
+
+# ------------ Evaluation ------------
+labels = list(crf.classes_)
+labels.remove('O')
+
+y_pred = crf.predict(X_test)
+print(metrics.flat_f1_score(y_test, y_pred, average='weighted', labels=labels))
+
+sorted_labels = sorted(
+    labels,
+    key=lambda name: (name[1:], name[0])
+)
+
+print(metrics.flat_classification_report(
+    y_test, y_pred, labels=sorted_labels, digits=3
+))
+
+crf = sklearn_crfsuite.CRF(
+    algorithm='pa',
+    max_iterations=100,
+    all_possible_transitions=True
+)
+
+crf.fit(X_train, y_train)
+
+y_pred = crf.predict(X_test)
+print(metrics.flat_f1_score(y_test, y_pred, average='weighted', labels=labels))
+print(metrics.flat_classification_report(
+    y_test, y_pred, labels=sorted_labels, digits=3
+))
+
+# params_space = {
+#     'c1': scipy.stats.expon(scale=0.5),
+#     'c2': scipy.stats.expon(scale=0.05),
+# }
+#
+# # use the same metric for evaluation
+# f1_scorer = make_scorer(metrics.flat_f1_score,
+#                         average='weighted', labels=labels)
+#
+# # search
+# rs = RandomizedSearchCV(crf, params_space,
+#                         cv=3,
+#                         verbose=1,
+#                         n_jobs=-1,
+#                         n_iter=50,
+#                         scoring=f1_scorer)
+# rs.fit(X_train, y_train)
+#
+# print('best params:', rs.best_params_)
+# print('best CV score:', rs.best_score_)
+# print('model size: {:0.2f}M'.format(rs.best_estimator_.size_ / 1000000))
 
