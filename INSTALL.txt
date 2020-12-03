@@ -1,0 +1,13 @@
+Packages:
+
+numpy
+quantities
+spacy
+pandas
+scikit-learn
+sklearn_crfsuite
+
+
+Also run the below to download the necessary model:
+
+python -m spacy download en_core_web_sm

@@ -1,7 +1,0 @@
-quantities
-spacy
-glob
-re
-pandas
-sklearn
-sklearn_crfsuite

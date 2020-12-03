@@ -1,20 +1,18 @@
 import glob
 import re
+from collections import Counter
+
 import pandas as pd
-import scipy.stats
+import sklearn_crfsuite
 import spacy
 from quantities import units as u
-import sklearn
-import sklearn_crfsuite
-from sklearn.metrics import make_scorer
-from sklearn.model_selection import RandomizedSearchCV
 from sklearn_crfsuite import metrics
 
 
 def get_text_data(text_files):
     """Return dataframe of text files"""
 
-    docs = {'docId': [], 'sent': []}
+    docs = {'docId': [], 'sent': [], 'ents': [], 'nounPhrases': []}
 
     for t_file in text_files:
         with open(t_file, 'r') as f:
@@ -26,7 +24,26 @@ def get_text_data(text_files):
                     docs['docId'].append(doc_id)
                     docs['sent'].append(sent)
 
-    doc_df = pd.DataFrame(docs, columns=['docId', 'sent'])
+                    ents = []
+
+                    for ent in sent.ents:
+                        token_span = (ent.start, ent.end)
+                        ent_type = (ent.label_, token_span)
+
+                        ents.append(ent_type)
+
+                    docs['ents'].append(ents)
+
+                    noun_phrases = []
+
+                    for nc in sent.noun_chunks:
+                        token_span = (nc.start, nc.end)
+
+                        noun_phrases.append((nc.text, token_span))
+
+                    docs['nounPhrases'].append(noun_phrases)
+
+    doc_df = pd.DataFrame(docs, columns=['docId', 'sent', 'ents', 'nounPhrases'])
 
     return doc_df
 
@@ -77,7 +94,7 @@ def get_labels(doc_df, annot_df):
     return labels['labels']
 
 
-def word2features(sent, i):
+def word2features(sent, ents, nouns, i):
     """Generate features from words"""
 
     word = sent[i]
@@ -94,6 +111,20 @@ def word2features(sent, i):
         'postag': word.tag_,
         'dep': word.dep_
     }
+
+    for ent in ents:
+        tok_span = ent[1]
+
+        if tok_span[0] <= word.i < tok_span[1]:
+            features['word.is_ent'] = ent[0]
+            break
+
+    for noun in nouns:
+        tok_span = noun[1]
+
+        if tok_span[0] <= word.i < tok_span[1]:
+            features['word.is_noun_phrase'] = list(noun[0])
+            break
 
     if i > 0:
         prev_word = word.nbor(-1)
@@ -127,13 +158,91 @@ def word2features(sent, i):
     else:
         features['EOS'] = True
 
+    window_2 = {'lower': [], 'lemma': [], 'pos': [], 'dep': []}
+    window_4 = {'lower': [], 'lemma': [], 'pos': [], 'dep': []}
+    for x in range(-4, 5):
+        if x == 0 or (i + x < 0) or (i + x > len(sent) - 1):
+            continue
+
+        window_word = word.nbor(x)
+
+        if x in range(-2, 3):
+            window_2['lower'].append(window_word.lower_)
+            window_2['pos'].append(window_word.pos_)
+            window_2['dep'].append(window_word.dep_)
+
+        window_4['lower'].append(window_word.lower_)
+        window_4['pos'].append(window_word.pos_)
+        window_4['dep'].append(window_word.dep_)
+
+    features.update({
+            'window_2_words:lower': window_2['lower'],
+            'window_2_words:pos': window_2['pos'],
+            'window_2_words:dep': window_2['dep'],
+            'window_4_words:lower': window_4['lower'],
+            'window_4_words:pos': window_4['pos'],
+            'window_4_words:dep': window_4['dep']
+    })
+
     return features
 
 
-def sent2features(sent):
+def sent2features(sent, ents, nouns):
     """Generate features for each sentence"""
-    return [word2features(sent, i) for i in range(len(sent))]
+    return [word2features(sent, ents, nouns, i) for i in range(len(sent))]
 
+
+def get_mismatched_metrics(actual, prediction):
+    """Get the metrics for the labels which were mismatched"""
+    mismatch = {
+            'O -> QNT': 0, 'O -> MSE': 0, 'O -> MSP': 0,
+            'QNT -> O': 0, 'MSE -> O': 0, 'MSP -> O': 0,
+            'QNT -> MSE': 0, 'QNT -> MSP': 0,
+            'MSE -> QNT': 0, 'MSE -> MSP': 0,
+            'MSP -> QNT': 0, 'MSP -> MSE': 0
+    }
+
+    labels = list(zip(actual, prediction))
+
+    for act, pred in labels:
+        for idx in range(len(act)):
+            if act[idx] == 'O' and pred[idx] == 'QNT':
+                mismatch['O -> QNT'] += 1
+            elif act[idx] == 'O' and pred[idx] == 'MSE':
+                mismatch['O -> MSE'] += 1
+            elif act[idx] == 'O' and pred[idx] == 'MSP':
+                mismatch['O -> MSP'] += 1
+            elif act[idx] == 'QNT' and pred[idx] == 'O':
+                mismatch['QNT -> O'] += 1
+            elif act[idx] == 'MSE' and pred[idx] == 'O':
+                mismatch['MSE -> O'] += 1
+            elif act[idx] == 'MSP' and pred[idx] == 'O':
+                mismatch['MSP -> O'] += 1
+            elif act[idx] == 'QNT' and pred[idx] == 'MSE':
+                mismatch['QNT -> MSE'] += 1
+            elif act[idx] == 'QNT' and pred[idx] == 'MSP':
+                mismatch['QNT -> MSP'] += 1
+            elif act[idx] == 'MSE' and pred[idx] == 'QNT':
+                mismatch['MSE -> QNT'] += 1
+            elif act[idx] == 'MSE' and pred[idx] == 'MSP':
+                mismatch['MSE -> MSP'] += 1
+            elif act[idx] == 'MSP' and pred[idx] == 'QNT':
+                mismatch['MSP -> QNT'] += 1
+            elif act[idx] == 'MSP' and pred[idx] == 'MSE':
+                mismatch['MSP -> MSE'] += 1
+
+            idx += 1
+
+    return mismatch
+
+
+def print_state_features(state_features):
+    """Print state features"""
+    for (attr, label), weight in state_features:
+        print("%0.6f %-8s %s" % (weight, label, attr))
+
+
+# *************** MAIN ****************
 
 tags = {'QNT': 'Quantity', 'MSE': 'MeasuredEntity', 'MSP': 'MeasuredProperty'}
 
@@ -147,9 +256,6 @@ for key, val in u.__dict__.items():
 
         if val.name not in units and val.name.lower() not in nlp.Defaults.stop_words:
             units.append(val.name.lower())
-
-pd.set_option('display.max_columns', 10)
-pd.set_option('display.width', 500)
 
 
 # ------------ Getting data for train and test files ------------
@@ -167,10 +273,10 @@ test_annot_df = pd.concat([pd.read_csv(a_file, sep='\t', header=0) for a_file in
 
 
 # ------------ Get features and labels ------------
-X_train = [sent2features(sent) for sent in train_doc_df['sent']]
+X_train = [sent2features(row['sent'], row['ents'], row['nounPhrases']) for _, row in train_doc_df.iterrows()]
 y_train = get_labels(train_doc_df, train_annot_df)
 
-X_test = [sent2features(sent) for sent in test_doc_df['sent']]
+X_test = [sent2features(row['sent'], row['ents'], row['nounPhrases']) for _, row in test_doc_df.iterrows()]
 y_test = get_labels(test_doc_df, test_annot_df)
 
 
@@ -191,7 +297,6 @@ labels = list(crf.classes_)
 labels.remove('O')
 
 y_pred = crf.predict(X_test)
-print(metrics.flat_f1_score(y_test, y_pred, average='weighted', labels=labels))
 
 sorted_labels = sorted(
     labels,
@@ -202,39 +307,14 @@ print(metrics.flat_classification_report(
     y_test, y_pred, labels=sorted_labels, digits=3
 ))
 
-crf = sklearn_crfsuite.CRF(
-    algorithm='pa',
-    max_iterations=100,
-    all_possible_transitions=True
-)
-
-crf.fit(X_train, y_train)
-
-y_pred = crf.predict(X_test)
-print(metrics.flat_f1_score(y_test, y_pred, average='weighted', labels=labels))
-print(metrics.flat_classification_report(
-    y_test, y_pred, labels=sorted_labels, digits=3
-))
-
-# params_space = {
-#     'c1': scipy.stats.expon(scale=0.5),
-#     'c2': scipy.stats.expon(scale=0.05),
-# }
+# mismatched = get_mismatched_metrics(y_test, y_pred)
 #
-# # use the same metric for evaluation
-# f1_scorer = make_scorer(metrics.flat_f1_score,
-#                         average='weighted', labels=labels)
+# for k, v in mismatched.items():
+#     print(k + ":", v)
+
+# print("Top positive:")
+# print_state_features(Counter(crf.state_features_).most_common(30))
 #
-# # search
-# rs = RandomizedSearchCV(crf, params_space,
-#                         cv=3,
-#                         verbose=1,
-#                         n_jobs=-1,
-#                         n_iter=50,
-#                         scoring=f1_scorer)
-# rs.fit(X_train, y_train)
-#
-# print('best params:', rs.best_params_)
-# print('best CV score:', rs.best_score_)
-# print('model size: {:0.2f}M'.format(rs.best_estimator_.size_ / 1000000))
+# print("\nTop negative:")
+# print_state_features(Counter(crf.state_features_).most_common()[-30:])
 
