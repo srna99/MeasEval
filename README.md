@@ -9,6 +9,6 @@ More details: https://competitions.codalab.org/competitions/25770
 Dataset: https://github.com/harperco/MeasEval
 
 # Project
-This project was made using Python 3.7 and the dependencies necessary to run it are in the INSTALL.txt file.
+This project was made using Python 3 and the dependencies necessary to run it are in the INSTALL.txt file, where *quantities* is for the dictionary of units, *spaCy* is for the features and tokenization, *pandas* is for the data structure, and *sklearn_crfsuite* is for the algorithm and model.
 
-In this project, the objective is to identify the Quantities, MeasuredEntities, and MeasuredProperties from the provided texts in the dataset. Features extracted from the text for the model include the lowercase form of a token, whether a token contains digits, the POS tag of a token, and the surrounding tokens. This model used conditional random fields (CRFs) with gradient descent using the L-BFGS method in the *sklearn_crfsuite* package. 
+In this project, the objective is to identify the Quantities, MeasuredEntities, and MeasuredProperties from the provided texts in the dataset. Features extracted from the text for the model include the lowercase form of a token, whether a token contains digits, the POS tag of a token, and the surrounding tokens. This model used conditional random fields (CRFs) with gradient descent using the L-BFGS method. 

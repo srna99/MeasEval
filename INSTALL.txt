@@ -1,4 +1,4 @@
-Packages:
+Install the following:
 
 numpy
 quantities
@@ -8,6 +8,6 @@ scikit-learn
 sklearn_crfsuite
 
 
-Also run the below to download the necessary model:
+Also run the following to download the necessary model:
 
 python -m spacy download en_core_web_sm
